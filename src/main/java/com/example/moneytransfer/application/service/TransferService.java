@@ -30,6 +30,7 @@ public class TransferService {
     private final AccountRepository accountRepository;
     private final TransactionRecordRepository transactionRecordRepository;
     private final LocalIdempotencyLockRegistry localIdempotencyLockRegistry;
+    private final LockRetryExecutor lockRetryExecutor;
     private final TransactionTemplate transferTransaction;
     private final TransactionTemplate requiresNewTransaction;
 
@@ -37,11 +38,13 @@ public class TransferService {
             AccountRepository accountRepository,
             TransactionRecordRepository transactionRecordRepository,
             LocalIdempotencyLockRegistry localIdempotencyLockRegistry,
+            LockRetryExecutor lockRetryExecutor,
             PlatformTransactionManager transactionManager
     ) {
         this.accountRepository = accountRepository;
         this.transactionRecordRepository = transactionRecordRepository;
         this.localIdempotencyLockRegistry = localIdempotencyLockRegistry;
+        this.lockRetryExecutor = lockRetryExecutor;
         this.transferTransaction = new TransactionTemplate(transactionManager);
         this.requiresNewTransaction = new TransactionTemplate(transactionManager);
         this.requiresNewTransaction.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
@@ -77,7 +80,7 @@ public class TransferService {
         }
 
         try {
-            return executeTransfer(command, money, reservation.record().getId());
+            return lockRetryExecutor.execute(() -> executeTransfer(command, money, reservation.record().getId()));
         } catch (RuntimeException ex) {
             log.warn(
                     "Transfer failed; marking transaction as FAILED: transactionId={}, idempotencyKey={}, reason={}",
