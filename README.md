@@ -1,91 +1,182 @@
 # Money Transfer Service
 
-Spring Boot service implementing:
+Spring Boot service for transferring money between accounts with DDD-style layering, PostgreSQL persistence, idempotency, concurrency safety, optional Redis-backed idempotency locks, retry handling for database lock failures, and transaction audit records.
 
-- balance validation
-- atomic debit and credit
-- idempotency via a unique `idempotency_key`
-- concurrent request safety with pessimistic database locks
-- transaction records
-- clear success/failure API responses
+## Features
 
-## Architecture
+- Validates source account balance before transfer.
+- Debits source account and credits destination account atomically.
+- Prevents duplicate processing with a client-provided `idempotencyKey`.
+- Uses database pessimistic row locks for concurrent account updates.
+- Locks accounts in deterministic UUID order to reduce deadlock risk.
+- Uses local per-idempotency-key `ReentrantLock` serialization by default.
+- Supports optional Redis-backed idempotency locks for multi-instance deployments.
+- Retries transient database lock failures outside the transfer method.
+- Stores transaction records with `PROCESSING`, `SUCCESS`, and `FAILED` status.
+- Exposes a REST API for transfer requests.
 
-The project follows a DDD-style package layout:
+## Project Location
 
-- `domain`: aggregates, value objects, enums, and domain exceptions
-- `application`: transfer use case and DTOs
-- `infrastructure.persistence`: JPA repositories
-- `interfaces.rest`: REST controller and error mapping
+```text
+C:\Users\rahul\IdeaProjects\transfer-fromaccountid-toaccountid-amount-idempotencykey-design
+```
 
-## Run PostgreSQL and pgAdmin
+## Tech Stack
+
+- Java 21
+- Spring Boot 3.3.5
+- Spring Web
+- Spring Data JPA
+- Spring Data Redis
+- PostgreSQL
+- Redis
+- H2 for tests
+- Maven
+- JUnit 5
+
+## Package Structure
+
+```text
+com.example.moneytransfer
+  application
+    dto                 Use-case input/output DTOs
+    service             Transfer orchestration, lock interface, local lock, retry executor
+  domain
+    exception           Business exceptions
+    model               Account, Money, TransactionRecord, TransactionStatus
+  infrastructure
+    lock                Redis-backed lock implementation
+    persistence         Spring Data JPA repositories
+  interfaces
+    rest                REST controller, request model, API error handling
+```
+
+## Database Setup
+
+The app connects to PostgreSQL database `transfer_app`.
+
+Connection settings in `src/main/resources/application.yml`:
+
+```yaml
+spring:
+  datasource:
+    url: jdbc:postgresql://localhost:5432/transfer_app
+    username: postgres
+    password: 1
+```
+
+Create the database once in pgAdmin or psql:
+
+```sql
+CREATE DATABASE transfer_app;
+```
+
+On application startup:
+
+1. `src/main/resources/schema.sql` creates the tables if they do not exist.
+2. `src/main/resources/data.sql` inserts sample accounts.
+
+Verify in pgAdmin:
+
+```sql
+select * from accounts;
+select * from transaction_records;
+```
+
+Sample seeded accounts:
+
+```text
+11111111-1111-1111-1111-111111111111 -> 1000.00 USD
+22222222-2222-2222-2222-222222222222 -> 100.00 USD
+```
+
+## Docker Compose
+
+The compose file includes PostgreSQL, Redis, and pgAdmin:
 
 ```powershell
 docker compose up -d
 ```
 
-PostgreSQL:
+Individual services:
 
-- Host: `localhost`
-- Port: `5432`
-- Database: `transfer_app`
-- User: `postgres`
-- Password: `1`
-
-pgAdmin:
-
-- URL: `http://localhost:5050`
-- Email: `admin@example.com`
-- Password: `admin`
-
-The app connects to the `transfer_app` database, creates tables from `src/main/resources/schema.sql`, and seeds two sample accounts from `src/main/resources/data.sql` on startup:
-
-```sql
-select * from accounts;
+```powershell
+docker compose up -d postgres
+docker compose up -d redis
+docker compose up -d pgadmin
 ```
 
-If you want to seed manually instead, run this in pgAdmin Query Tool after the app has created the tables:
+Redis runs at:
 
-```sql
-insert into accounts (id, balance, currency, version)
-values
-('11111111-1111-1111-1111-111111111111', 1000.00, 'USD', 0),
-('22222222-2222-2222-2222-222222222222', 100.00, 'USD', 0)
-on conflict (id) do nothing;
+```text
+localhost:6379
 ```
 
-## Run the service
+pgAdmin runs at:
+
+```text
+http://localhost:5050
+```
+
+pgAdmin login:
+
+```text
+Email: admin@example.com
+Password: admin
+```
+
+## Run From IntelliJ
+
+1. Open the project folder in IntelliJ IDEA.
+2. Ensure Project SDK is Java 21.
+3. Let IntelliJ import Maven dependencies from `pom.xml`.
+4. Create PostgreSQL database `transfer_app`.
+5. Run `MoneyTransferApplication`.
+
+The app starts at:
+
+```text
+http://localhost:8080
+```
+
+## Run From Terminal
 
 ```powershell
 mvn spring-boot:run
 ```
 
-The app starts on `http://localhost:8080`.
+Run tests:
 
-## Seed accounts
-
-```sql
-insert into accounts (id, balance, currency, version)
-values
-('11111111-1111-1111-1111-111111111111', 1000.00, 'USD', 0),
-('22222222-2222-2222-2222-222222222222', 100.00, 'USD', 0);
+```powershell
+mvn test
 ```
 
 ## Transfer API
 
-```http
-POST /api/transfers
-Content-Type: application/json
+Full URL:
 
+```text
+POST http://localhost:8080/api/transfers
+```
+
+Headers:
+
+```text
+Content-Type: application/json
+```
+
+Sample request:
+
+```json
 {
   "fromAccountId": "11111111-1111-1111-1111-111111111111",
   "toAccountId": "22222222-2222-2222-2222-222222222222",
   "amount": 25.00,
-  "idempotencyKey": "client-request-123"
+  "idempotencyKey": "postman-transfer-001"
 }
 ```
 
-Successful response:
+Sample success response:
 
 ```json
 {
@@ -95,14 +186,219 @@ Successful response:
   "fromAccountId": "11111111-1111-1111-1111-111111111111",
   "toAccountId": "22222222-2222-2222-2222-222222222222",
   "amount": 25.00,
-  "idempotencyKey": "client-request-123"
+  "currency": "USD",
+  "idempotencyKey": "postman-transfer-001"
 }
 ```
 
-## Design Notes
+## How A Transfer Works
 
-- Race conditions are avoided by wrapping the transfer in one database transaction and locking both account rows with `PESSIMISTIC_WRITE`.
-- Deadlocks are reduced by locking accounts in deterministic UUID order before applying debit and credit.
-- Idempotency is enforced by a unique database constraint on `transaction_records.idempotency_key`.
-- Debit and credit are atomic because both happen in the same database transaction. If credit fails, the whole transaction rolls back and the transaction record is marked failed in a separate transaction.
-- In microservices, replace the single database transaction with a saga/outbox pattern and make debit/credit operations idempotent in each service.
+```text
+HTTP JSON request
+  -> TransferRequest
+  -> TransferCommand
+  -> TransferService
+  -> acquire idempotency lock
+  -> reserve/find idempotency transaction record
+  -> lock both account rows in deterministic order
+  -> debit source account
+  -> credit destination account
+  -> mark transaction record SUCCESS
+  -> return TransferResult
+```
+
+## Idempotency
+
+The client creates and sends an `idempotencyKey`.
+
+The server stores it in:
+
+```text
+transaction_records.idempotency_key
+```
+
+The database enforces uniqueness:
+
+```sql
+constraint uk_transaction_idempotency_key unique (idempotency_key)
+```
+
+If the same request is retried with the same key, the service returns the existing transaction result instead of moving money again.
+
+If the same key is reused with different transfer details, the service rejects it.
+
+## Redis Locking
+
+Redis is the ideal place for a distributed idempotency lock when the app runs on multiple instances.
+
+The application depends on:
+
+```text
+IdempotencyLockRegistry
+```
+
+Implementations:
+
+```text
+LocalIdempotencyLockRegistry      default, single JVM
+RedisIdempotencyLockRegistry      optional, multi-instance
+```
+
+Redis lives in infrastructure because it is an external technology adapter:
+
+```text
+src/main/java/com/example/moneytransfer/infrastructure/lock/RedisIdempotencyLockRegistry.java
+```
+
+Enable Redis locking:
+
+```yaml
+money-transfer:
+  lock:
+    type: redis
+```
+
+Redis settings:
+
+```yaml
+spring:
+  data:
+    redis:
+      host: localhost
+      port: 6379
+
+money-transfer:
+  lock:
+    redis:
+      ttl: 30s
+      wait-timeout: 2s
+      retry-delay: 50ms
+```
+
+Redis locking uses `SET NX` with a TTL and a Lua compare-and-delete unlock script.
+
+Redis locking is not the final correctness boundary. The database unique constraint on `transaction_records.idempotency_key` remains the source of truth.
+
+## Concurrency Safety
+
+The service uses two layers of protection:
+
+1. Idempotency lock by `idempotencyKey`
+2. PostgreSQL row locks on account records
+
+The idempotency lock reduces duplicate same-key work. The database lock protects account balance correctness.
+
+The repository lock:
+
+```java
+@Lock(LockModeType.PESSIMISTIC_WRITE)
+```
+
+Hibernate turns this into SQL similar to:
+
+```sql
+select *
+from accounts
+where id = ?
+for update;
+```
+
+## Deadlock Reduction
+
+Transfers may involve the same two accounts in opposite directions:
+
+```text
+A -> B
+B -> A
+```
+
+To reduce deadlock risk, the service always sorts account IDs and locks them in the same order:
+
+```text
+smaller UUID first
+larger UUID second
+```
+
+## Retry Behavior
+
+`LockRetryExecutor` retries transient lock-related failures outside the main transfer method.
+
+Retried exceptions:
+
+- `CannotAcquireLockException`
+- `PessimisticLockingFailureException`
+- `QueryTimeoutException`
+
+Default policy:
+
+```text
+max attempts: 3
+backoff: 100ms, then 200ms
+```
+
+Non-lock exceptions, such as validation failures or insufficient funds, are not retried.
+
+## Transaction Boundaries
+
+The service uses `TransactionTemplate`.
+
+Main transfer transaction:
+
+```text
+lock accounts
+debit source
+credit destination
+mark SUCCESS
+```
+
+Separate `REQUIRES_NEW` transactions:
+
+```text
+create PROCESSING transaction record
+mark FAILED transaction record
+```
+
+This ensures failure audit records survive even when the money movement transaction rolls back.
+
+## Important Files
+
+```text
+src/main/java/com/example/moneytransfer/interfaces/rest/TransferController.java
+src/main/java/com/example/moneytransfer/interfaces/rest/TransferRequest.java
+src/main/java/com/example/moneytransfer/application/service/TransferService.java
+src/main/java/com/example/moneytransfer/application/service/IdempotencyLockRegistry.java
+src/main/java/com/example/moneytransfer/application/service/LocalIdempotencyLockRegistry.java
+src/main/java/com/example/moneytransfer/application/service/LockRetryExecutor.java
+src/main/java/com/example/moneytransfer/infrastructure/lock/RedisIdempotencyLockRegistry.java
+src/main/java/com/example/moneytransfer/domain/model/Account.java
+src/main/java/com/example/moneytransfer/domain/model/TransactionRecord.java
+src/main/resources/schema.sql
+src/main/resources/data.sql
+```
+
+## Tests
+
+The test suite covers:
+
+- successful transfer
+- insufficient funds
+- idempotent replay
+- idempotency key conflict
+- concurrent same-key requests
+- local lock serialization
+- lock retry behavior
+- REST endpoint request/response
+
+Run:
+
+```powershell
+mvn test
+```
+
+## Additional Design Documentation
+
+See:
+
+```text
+docs/architecture.md
+```

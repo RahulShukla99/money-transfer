@@ -3,13 +3,16 @@ package com.example.moneytransfer.application.service;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.locks.ReentrantLock;
 import java.util.function.Supplier;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Component;
 
 @Component
-public class LocalIdempotencyLockRegistry {
+@ConditionalOnProperty(prefix = "money-transfer.lock", name = "type", havingValue = "local", matchIfMissing = true)
+public class LocalIdempotencyLockRegistry implements IdempotencyLockRegistry {
 
     private final ConcurrentHashMap<String, LockHolder> locks = new ConcurrentHashMap<>();
 
+    @Override
     public <T> T executeWithLock(String idempotencyKey, Supplier<T> action) {
         LockHolder holder = locks.compute(idempotencyKey, (key, existing) -> {
             if (existing == null) {
