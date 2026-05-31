@@ -14,6 +14,7 @@ Spring Boot service for transferring money between accounts with DDD-style layer
 - Retries transient database lock failures outside the transfer method.
 - Stores transaction records with `PROCESSING`, `SUCCESS`, and `FAILED` status.
 - Exposes a REST API for transfer requests.
+- Exposes an optional Kafka stream consumer for continuous transfer requests.
 
 ## Project Location
 
@@ -28,8 +29,10 @@ C:\Users\rahul\IdeaProjects\transfer-fromaccountid-toaccountid-amount-idempotenc
 - Spring Web
 - Spring Data JPA
 - Spring Data Redis
+- Spring Kafka
 - PostgreSQL
 - Redis
+- Kafka
 - H2 for tests
 - Maven
 - JUnit 5
@@ -49,6 +52,7 @@ com.example.moneytransfer
     persistence         Spring Data JPA repositories
   interfaces
     rest                REST controller, request model, API error handling
+    stream              Kafka consumer and stream message model
 ```
 
 ## Database Setup
@@ -92,7 +96,7 @@ Sample seeded accounts:
 
 ## Docker Compose
 
-The compose file includes PostgreSQL, Redis, and pgAdmin:
+The compose file includes PostgreSQL, Redis, Kafka, and pgAdmin:
 
 ```powershell
 docker compose up -d
@@ -103,6 +107,7 @@ Individual services:
 ```powershell
 docker compose up -d postgres
 docker compose up -d redis
+docker compose up -d kafka
 docker compose up -d pgadmin
 ```
 
@@ -110,6 +115,12 @@ Redis runs at:
 
 ```text
 localhost:6379
+```
+
+Kafka runs at:
+
+```text
+localhost:9092
 ```
 
 pgAdmin runs at:
@@ -191,11 +202,51 @@ Sample success response:
 }
 ```
 
+## Transfer Stream Consumer
+
+The app also has a Kafka entry point for continuous transfer requests.
+
+The stream adapter lives here:
+
+```text
+src/main/java/com/example/moneytransfer/interfaces/stream/TransferStreamConsumer.java
+```
+
+It consumes messages from:
+
+```text
+money-transfer.requests
+```
+
+Enable it in `application.yml`:
+
+```yaml
+money-transfer:
+  stream:
+    kafka:
+      enabled: true
+      transfer-requests-topic: money-transfer.requests
+      consumer-group: money-transfer-service
+```
+
+Sample Kafka message:
+
+```json
+{
+  "fromAccountId": "11111111-1111-1111-1111-111111111111",
+  "toAccountId": "22222222-2222-2222-2222-222222222222",
+  "amount": 25.00,
+  "idempotencyKey": "stream-transfer-001"
+}
+```
+
+The stream consumer maps the message to `TransferCommand` and calls the same `TransferService` used by the REST API.
+
 ## How A Transfer Works
 
 ```text
-HTTP JSON request
-  -> TransferRequest
+HTTP JSON request or Kafka message
+  -> TransferRequest or TransferStreamMessage
   -> TransferCommand
   -> TransferService
   -> acquire idempotency lock
@@ -365,6 +416,8 @@ This ensures failure audit records survive even when the money movement transact
 ```text
 src/main/java/com/example/moneytransfer/interfaces/rest/TransferController.java
 src/main/java/com/example/moneytransfer/interfaces/rest/TransferRequest.java
+src/main/java/com/example/moneytransfer/interfaces/stream/TransferStreamConsumer.java
+src/main/java/com/example/moneytransfer/interfaces/stream/TransferStreamMessage.java
 src/main/java/com/example/moneytransfer/application/service/TransferService.java
 src/main/java/com/example/moneytransfer/application/service/IdempotencyLockRegistry.java
 src/main/java/com/example/moneytransfer/application/service/LocalIdempotencyLockRegistry.java
@@ -388,6 +441,7 @@ The test suite covers:
 - local lock serialization
 - lock retry behavior
 - REST endpoint request/response
+- Kafka stream consumer message mapping
 
 Run:
 

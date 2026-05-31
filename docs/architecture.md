@@ -15,6 +15,7 @@ It validates balance, transfers money atomically, prevents duplicate processing,
 | Layer | Responsibility |
 |---|---|
 | `interfaces.rest` | HTTP request/response handling, validation annotations, exception-to-HTTP mapping |
+| `interfaces.stream` | Kafka message consumption and stream-message-to-command mapping |
 | `application` | Use-case orchestration, transaction boundaries, idempotency lock abstraction, retry policy |
 | `domain` | Business objects and rules: account debit/credit, money validation, transaction status |
 | `infrastructure.persistence` | Database repository interfaces and JPA locking queries |
@@ -23,9 +24,9 @@ It validates balance, transfers money atomically, prevents duplicate processing,
 ## Request Flow
 
 ```text
-Client
-  -> TransferController
-  -> TransferRequest
+HTTP Client or Kafka Topic
+  -> TransferController or TransferStreamConsumer
+  -> TransferRequest or TransferStreamMessage
   -> TransferCommand
   -> TransferService
   -> IdempotencyLockRegistry
@@ -36,6 +37,27 @@ Client
   -> transaction_records SUCCESS/FAILED
   -> TransferResult
 ```
+
+## Why Kafka Is An Interface Adapter
+
+Kafka is another way for the outside world to start the same transfer use case.
+
+The stream consumer belongs in:
+
+```text
+interfaces.stream
+```
+
+because it accepts external input, validates/maps it, and then calls the application service. It should not contain debit, credit, idempotency, or database transaction logic.
+
+The important design point:
+
+```text
+REST request -> TransferCommand -> TransferService
+Kafka message -> TransferCommand -> TransferService
+```
+
+Both entry points reuse the same use case, so concurrency, idempotency, account locking, retry, and audit behavior stay consistent.
 
 ## Why Redis Is Infrastructure
 
