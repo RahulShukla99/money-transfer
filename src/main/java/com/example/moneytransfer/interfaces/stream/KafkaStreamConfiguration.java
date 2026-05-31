@@ -8,4 +8,6 @@ import org.springframework.kafka.annotation.EnableKafka;
 @EnableKafka
 @ConditionalOnProperty(prefix = "money-transfer.stream.kafka", name = "enabled", havingValue = "true")
 class KafkaStreamConfiguration {
+//    Only activate if money-transfer.stream.kafka.enabled=true i.e.
+//    TransferStreamConsumer is NOT created then Kafka listener does NOT start
 }
