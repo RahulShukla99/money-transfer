@@ -1,9 +1,12 @@
 package com.example.moneytransfer.interfaces.stream;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.tuple;
 import static org.mockito.Mockito.verify;
 
 import java.math.BigDecimal;
+import java.time.Instant;
+import java.util.List;
 import java.util.UUID;
 import org.junit.jupiter.api.Test;
 import org.springframework.kafka.support.Acknowledgment;
@@ -16,7 +19,8 @@ class TransferStreamConsumerTest {
     @Test
     void consumesTransferMessageByPuttingItOnQueue() throws InterruptedException {
         LinkedBlockingTransferStreamQueue queue = new LinkedBlockingTransferStreamQueue(10);
-        TransferStreamConsumer consumer = new TransferStreamConsumer(queue);
+        AccountStreamActivityTracker activityTracker = new AccountStreamActivityTracker();
+        TransferStreamConsumer consumer = new TransferStreamConsumer(queue, activityTracker);
         Acknowledgment acknowledgment = org.mockito.Mockito.mock(Acknowledgment.class);
         TransferStreamMessage message = new TransferStreamMessage(
                 FROM,
@@ -31,5 +35,10 @@ class TransferStreamConsumerTest {
         assertThat(workItem.message()).isEqualTo(message);
         assertThat(queue.size()).isZero();
         verify(acknowledgment, org.mockito.Mockito.never()).acknowledge();
+
+        List<AccountStreamActivity> fromActivities = activityTracker.findActivitySince(FROM, Instant.EPOCH);
+        assertThat(fromActivities)
+                .extracting(AccountStreamActivity::direction, AccountStreamActivity::stage)
+                .containsExactly(tuple(AccountStreamActivityDirection.OUTGOING, AccountStreamActivityStage.RECEIVED));
     }
 }

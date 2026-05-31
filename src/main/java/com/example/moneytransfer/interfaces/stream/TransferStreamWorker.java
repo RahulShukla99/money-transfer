@@ -20,12 +20,18 @@ public class TransferStreamWorker {
 
     private final TransferStreamQueue transferStreamQueue;
     private final TransferService transferService;
+    private final AccountStreamActivityTracker activityTracker;
     private final ExecutorService executorService = Executors.newSingleThreadExecutor();
     private volatile boolean running = true;
 
-    public TransferStreamWorker(TransferStreamQueue transferStreamQueue, TransferService transferService) {
+    public TransferStreamWorker(
+            TransferStreamQueue transferStreamQueue,
+            TransferService transferService,
+            AccountStreamActivityTracker activityTracker
+    ) {
         this.transferStreamQueue = transferStreamQueue;
         this.transferService = transferService;
+        this.activityTracker = activityTracker;
     }
 
     @EventListener(ApplicationReadyEvent.class)
@@ -38,7 +44,16 @@ public class TransferStreamWorker {
         TransferStreamWorkItem workItem = transferStreamQueue.take();
         TransferStreamMessage message = workItem.message();
 
-        TransferResult result = transferService.transfer(message.toCommand());
+        activityTracker.recordProcessing(message);
+
+        TransferResult result;
+        try {
+            result = transferService.transfer(message.toCommand());
+            activityTracker.recordSuccess(message);
+        } catch (RuntimeException ex) {
+            activityTracker.recordFailed(message, ex.getMessage());
+            throw ex;
+        }
 
         log.info(
                 "Stream transfer request completed: transactionId={}, status={}, idempotencyKey={}, queuedMessages={}",

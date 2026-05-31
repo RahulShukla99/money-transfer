@@ -15,7 +15,7 @@ It validates balance, transfers money atomically, prevents duplicate processing,
 | Layer | Responsibility |
 |---|---|
 | `interfaces.rest` | HTTP request/response handling, validation annotations, exception-to-HTTP mapping |
-| `interfaces.stream` | Kafka message consumption, in-memory stream queueing, and stream-message-to-command mapping |
+| `interfaces.stream` | Kafka message consumption, in-memory stream queueing, per-account activity tracking, and stream-message-to-command mapping |
 | `application` | Use-case orchestration, transaction boundaries, idempotency lock abstraction, retry policy |
 | `domain` | Business objects and rules: account debit/credit, money validation, transaction status |
 | `infrastructure.persistence` | Database repository interfaces and JPA locking queries |
@@ -73,6 +73,46 @@ KafkaListener thread -> LinkedBlockingQueue -> worker thread -> TransferService
 The queue is not the durable source of truth. Kafka is still the durable stream, and PostgreSQL remains the correctness boundary for idempotency and money movement.
 
 The worker acknowledges the Kafka message only after the transfer succeeds. If processing fails, the message is not acknowledged, and Kafka can redeliver it.
+
+## Per-Account Activity Range Lookup
+
+The stream layer keeps a short-lived in-memory timeline per account:
+
+```java
+ConcurrentHashMap<UUID, ConcurrentSkipListMap<Instant, AccountStreamActivity>>
+```
+
+The outer map finds the account. The `ConcurrentSkipListMap` keeps that account's activity sorted by time.
+
+Range lookup:
+
+```java
+accountActivity.get(accountId).tailMap(oneHourAgo)
+```
+
+This answers:
+
+```text
+What stream activity touched this account in the last hour in this app instance?
+```
+
+Each transfer message records activity for both accounts:
+
+```text
+fromAccountId -> OUTGOING
+toAccountId   -> INCOMING
+```
+
+Tracked stages:
+
+```text
+RECEIVED
+PROCESSING
+SUCCESS
+FAILED
+```
+
+This is useful for debugging and live operational visibility. It is not used for balances, idempotency, audit, or reporting. Those remain in PostgreSQL.
 
 ## Why Redis Is Infrastructure
 

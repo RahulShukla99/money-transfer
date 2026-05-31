@@ -17,9 +17,14 @@ public class TransferStreamConsumer {
     private static final Logger log = LoggerFactory.getLogger(TransferStreamConsumer.class);
 
     private final TransferStreamQueue transferStreamQueue;
+    private final AccountStreamActivityTracker activityTracker;
 
-    public TransferStreamConsumer(TransferStreamQueue transferStreamQueue) {
+    public TransferStreamConsumer(
+            TransferStreamQueue transferStreamQueue,
+            AccountStreamActivityTracker activityTracker
+    ) {
         this.transferStreamQueue = transferStreamQueue;
+        this.activityTracker = activityTracker;
     }
 
     @KafkaListener(
@@ -34,6 +39,7 @@ public class TransferStreamConsumer {
                 message.amount(),
                 message.idempotencyKey()
         );
+        activityTracker.recordReceived(message);
         transferStreamQueue.enqueue(new TransferStreamWorkItem(message, acknowledgment));
     }
 }

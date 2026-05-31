@@ -52,7 +52,7 @@ com.example.moneytransfer
     persistence         Spring Data JPA repositories
   interfaces
     rest                REST controller, request model, API error handling
-    stream              Kafka consumer, stream queue, worker, and message model
+    stream              Kafka consumer, stream queue, worker, activity tracker, and message model
 ```
 
 ## Database Setup
@@ -245,6 +245,36 @@ The stream consumer places the message on an internal bounded `LinkedBlockingQue
 
 Kafka remains the durable queue. The `LinkedBlockingQueue` is only an in-memory buffer/backpressure point inside this app instance. The worker acknowledges the Kafka message only after `TransferService` completes successfully.
 
+## Recent Account Stream Activity
+
+When Kafka streaming is enabled, the app tracks recent per-account stream activity in memory using:
+
+```text
+ConcurrentHashMap<UUID, ConcurrentSkipListMap<Instant, AccountStreamActivity>>
+```
+
+This allows efficient range lookups such as:
+
+```java
+accountActivity.get(accountId).tailMap(oneHourAgo)
+```
+
+Debug endpoint:
+
+```text
+GET http://localhost:8080/api/debug/accounts/{accountId}/stream-activity?minutes=60
+```
+
+Example:
+
+```text
+GET http://localhost:8080/api/debug/accounts/11111111-1111-1111-1111-111111111111/stream-activity?minutes=60
+```
+
+This returns recent stream activity for that account in this running app instance, such as `RECEIVED`, `PROCESSING`, `SUCCESS`, and `FAILED`.
+
+This is for operational visibility only. Official transfer history remains in PostgreSQL `transaction_records`.
+
 ## How A Transfer Works
 
 ```text
@@ -424,6 +454,7 @@ src/main/java/com/example/moneytransfer/interfaces/stream/TransferStreamConsumer
 src/main/java/com/example/moneytransfer/interfaces/stream/TransferStreamMessage.java
 src/main/java/com/example/moneytransfer/interfaces/stream/LinkedBlockingTransferStreamQueue.java
 src/main/java/com/example/moneytransfer/interfaces/stream/TransferStreamWorker.java
+src/main/java/com/example/moneytransfer/interfaces/stream/AccountStreamActivityTracker.java
 src/main/java/com/example/moneytransfer/application/service/TransferService.java
 src/main/java/com/example/moneytransfer/application/service/IdempotencyLockRegistry.java
 src/main/java/com/example/moneytransfer/application/service/LocalIdempotencyLockRegistry.java
@@ -449,6 +480,7 @@ The test suite covers:
 - REST endpoint request/response
 - Kafka stream consumer message mapping
 - LinkedBlockingQueue stream buffering and worker processing
+- ConcurrentSkipListMap account activity range lookup
 
 Run:
 
