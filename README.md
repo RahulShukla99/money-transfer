@@ -52,7 +52,7 @@ com.example.moneytransfer
     persistence         Spring Data JPA repositories
   interfaces
     rest                REST controller, request model, API error handling
-    stream              Kafka consumer and stream message model
+    stream              Kafka consumer, stream queue, worker, and message model
 ```
 
 ## Database Setup
@@ -227,6 +227,7 @@ money-transfer:
       enabled: true
       transfer-requests-topic: money-transfer.requests
       consumer-group: money-transfer-service
+      queue-capacity: 1000
 ```
 
 Sample Kafka message:
@@ -240,13 +241,16 @@ Sample Kafka message:
 }
 ```
 
-The stream consumer maps the message to `TransferCommand` and calls the same `TransferService` used by the REST API.
+The stream consumer places the message on an internal bounded `LinkedBlockingQueue`. A stream worker drains that queue, maps the message to `TransferCommand`, and calls the same `TransferService` used by the REST API.
+
+Kafka remains the durable queue. The `LinkedBlockingQueue` is only an in-memory buffer/backpressure point inside this app instance. The worker acknowledges the Kafka message only after `TransferService` completes successfully.
 
 ## How A Transfer Works
 
 ```text
 HTTP JSON request or Kafka message
   -> TransferRequest or TransferStreamMessage
+  -> LinkedBlockingQueue for stream messages
   -> TransferCommand
   -> TransferService
   -> acquire idempotency lock
@@ -418,6 +422,8 @@ src/main/java/com/example/moneytransfer/interfaces/rest/TransferController.java
 src/main/java/com/example/moneytransfer/interfaces/rest/TransferRequest.java
 src/main/java/com/example/moneytransfer/interfaces/stream/TransferStreamConsumer.java
 src/main/java/com/example/moneytransfer/interfaces/stream/TransferStreamMessage.java
+src/main/java/com/example/moneytransfer/interfaces/stream/LinkedBlockingTransferStreamQueue.java
+src/main/java/com/example/moneytransfer/interfaces/stream/TransferStreamWorker.java
 src/main/java/com/example/moneytransfer/application/service/TransferService.java
 src/main/java/com/example/moneytransfer/application/service/IdempotencyLockRegistry.java
 src/main/java/com/example/moneytransfer/application/service/LocalIdempotencyLockRegistry.java
@@ -442,6 +448,7 @@ The test suite covers:
 - lock retry behavior
 - REST endpoint request/response
 - Kafka stream consumer message mapping
+- LinkedBlockingQueue stream buffering and worker processing
 
 Run:
 

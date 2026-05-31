@@ -54,6 +54,7 @@ money-transfer:
       enabled: false
       transfer-requests-topic: money-transfer.requests
       consumer-group: money-transfer-service
+      queue-capacity: 1000
 
 logging:
   level:

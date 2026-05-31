@@ -15,7 +15,7 @@ It validates balance, transfers money atomically, prevents duplicate processing,
 | Layer | Responsibility |
 |---|---|
 | `interfaces.rest` | HTTP request/response handling, validation annotations, exception-to-HTTP mapping |
-| `interfaces.stream` | Kafka message consumption and stream-message-to-command mapping |
+| `interfaces.stream` | Kafka message consumption, in-memory stream queueing, and stream-message-to-command mapping |
 | `application` | Use-case orchestration, transaction boundaries, idempotency lock abstraction, retry policy |
 | `domain` | Business objects and rules: account debit/credit, money validation, transaction status |
 | `infrastructure.persistence` | Database repository interfaces and JPA locking queries |
@@ -27,6 +27,7 @@ It validates balance, transfers money atomically, prevents duplicate processing,
 HTTP Client or Kafka Topic
   -> TransferController or TransferStreamConsumer
   -> TransferRequest or TransferStreamMessage
+  -> LinkedBlockingQueue for stream messages
   -> TransferCommand
   -> TransferService
   -> IdempotencyLockRegistry
@@ -54,10 +55,24 @@ The important design point:
 
 ```text
 REST request -> TransferCommand -> TransferService
-Kafka message -> TransferCommand -> TransferService
+Kafka message -> LinkedBlockingQueue -> TransferCommand -> TransferService
 ```
 
 Both entry points reuse the same use case, so concurrency, idempotency, account locking, retry, and audit behavior stay consistent.
+
+## Why There Is A LinkedBlockingQueue
+
+The stream adapter includes a bounded `LinkedBlockingQueue`.
+
+Its purpose is local buffering and backpressure inside one app instance:
+
+```text
+KafkaListener thread -> LinkedBlockingQueue -> worker thread -> TransferService
+```
+
+The queue is not the durable source of truth. Kafka is still the durable stream, and PostgreSQL remains the correctness boundary for idempotency and money movement.
+
+The worker acknowledges the Kafka message only after the transfer succeeds. If processing fails, the message is not acknowledged, and Kafka can redeliver it.
 
 ## Why Redis Is Infrastructure
 

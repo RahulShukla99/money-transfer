@@ -1,7 +1,5 @@
 package com.example.moneytransfer.interfaces.stream;
 
-import com.example.moneytransfer.application.dto.TransferResult;
-import com.example.moneytransfer.application.service.TransferService;
 import jakarta.validation.Valid;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -18,10 +16,10 @@ public class TransferStreamConsumer {
 
     private static final Logger log = LoggerFactory.getLogger(TransferStreamConsumer.class);
 
-    private final TransferService transferService;
+    private final TransferStreamQueue transferStreamQueue;
 
-    public TransferStreamConsumer(TransferService transferService) {
-        this.transferService = transferService;
+    public TransferStreamConsumer(TransferStreamQueue transferStreamQueue) {
+        this.transferStreamQueue = transferStreamQueue;
     }
 
     @KafkaListener(
@@ -36,15 +34,6 @@ public class TransferStreamConsumer {
                 message.amount(),
                 message.idempotencyKey()
         );
-
-        TransferResult result = transferService.transfer(message.toCommand());
-
-        log.info(
-                "Stream transfer request completed: transactionId={}, status={}, idempotencyKey={}",
-                result.transactionId(),
-                result.status(),
-                result.idempotencyKey()
-        );
-        acknowledgment.acknowledge();
+        transferStreamQueue.enqueue(new TransferStreamWorkItem(message, acknowledgment));
     }
 }
