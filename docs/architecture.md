@@ -8,48 +8,45 @@ The service implements:
 transfer(fromAccountId, toAccountId, amount, idempotencyKey)
 ```
 
-It must:
-
-- validate source balance
-- debit source account
-- credit destination account
-- avoid duplicate processing
-- remain safe under concurrency
-- store a transaction record
-- return clear success/failure responses
+It validates balance, transfers money atomically, prevents duplicate processing, handles concurrency, stores transaction records, and returns clear responses.
 
 ## Layer Responsibilities
 
 | Layer | Responsibility |
 |---|---|
-| `interfaces.rest` | HTTP request/response handling, validation annotations, exception-to-HTTP mapping |
-| `application` | Use-case orchestration, transaction boundaries, idempotency flow, retry policy |
+| `interfaces.rest` | HTTP request/response handling, validation annotations, exception-to-HTTP mapping, debug stream activity endpoint |
+| `interfaces.stream` | Kafka message consumption, in-memory stream queueing, per-account activity tracking, and stream-message-to-command mapping |
+| `application` | Use-case orchestration, transaction boundaries, idempotency lock abstraction, retry policy |
 | `domain` | Business objects and rules: account debit/credit, money validation, transaction status |
 | `infrastructure.persistence` | Database repository interfaces and JPA locking queries |
+| `infrastructure.lock` | Redis-backed lock adapter for distributed idempotency locking |
 
 ## Request Flow
 
-```mermaid
-sequenceDiagram
-    participant Client
-    participant Controller as TransferController
-    participant Service as TransferService
-    participant LocalLock as LocalIdempotencyLockRegistry
-    participant Retry as LockRetryExecutor
-    participant DB as PostgreSQL
+```text
+HTTP Client
+  -> TransferController
+  -> TransferRequest
+  -> TransferCommand
+  -> TransferService
+  -> IdempotencyLockRegistry
+  -> transaction_records idempotency check/reservation
+  -> LockRetryExecutor
+  -> account row locks
+  -> debit/credit
+  -> transaction_records SUCCESS/FAILED
+  -> TransferResult
+```
 
-    Client->>Controller: POST /api/transfers
-    Controller->>Service: TransferCommand
-    Service->>LocalLock: executeWithLock(idempotencyKey)
-    LocalLock->>Service: run doTransfer()
-    Service->>DB: find/create transaction_records row
-    Service->>Retry: execute transfer transaction
-    Retry->>DB: lock account rows FOR UPDATE
-    Retry->>DB: debit + credit + mark SUCCESS
-    DB-->>Retry: commit
-    Retry-->>Service: TransferResult
-    Service-->>Controller: TransferResult
-    Controller-->>Client: 200 OK
+```text
+Kafka Topic
+  -> TransferStreamConsumer
+  -> TransferStreamMessage
+  -> LinkedBlockingQueue
+  -> TransferStreamWorker
+  -> TransferCommand
+  -> TransferService
+  -> same transfer flow as REST
 ```
 
 ## Why `TransferRequest` Is In `interfaces.rest`
@@ -66,6 +63,100 @@ It contains REST concerns such as:
 The controller maps it into `TransferCommand`, which is the application-layer use-case input.
 
 This keeps HTTP details out of the application and domain layers.
+
+## Why Kafka Is An Interface Adapter
+
+Kafka is another way for the outside world to start the same transfer use case.
+
+The stream consumer belongs in:
+
+```text
+interfaces.stream
+```
+
+because it accepts external input, validates/maps it, and then hands the request to the application service through a queue and worker. It does not contain debit, credit, idempotency, or database transaction logic.
+
+The important design point:
+
+```text
+REST request -> TransferCommand -> TransferService
+Kafka message -> LinkedBlockingQueue -> TransferCommand -> TransferService
+```
+
+Both entry points reuse the same use case, so concurrency, idempotency, account locking, retry, and audit behavior stay consistent.
+
+## Why There Is A LinkedBlockingQueue
+
+The stream adapter includes a bounded `LinkedBlockingQueue`.
+
+Its purpose is local buffering and backpressure inside one app instance:
+
+```text
+KafkaListener thread -> LinkedBlockingQueue -> worker thread -> TransferService
+```
+
+The queue is not the durable source of truth. Kafka is still the durable stream, and PostgreSQL remains the correctness boundary for idempotency and money movement.
+
+The worker acknowledges the Kafka message only after the transfer succeeds. If processing fails, the message is not acknowledged, and Kafka can redeliver it.
+
+## Per-Account Activity Range Lookup
+
+The stream layer keeps a short-lived in-memory timeline per account:
+
+```java
+ConcurrentHashMap<UUID, ConcurrentSkipListMap<Instant, AccountStreamActivity>>
+```
+
+The outer map finds the account. The `ConcurrentSkipListMap` keeps that account's activity sorted by time.
+
+Range lookup:
+
+```java
+accountActivity.get(accountId).tailMap(oneHourAgo)
+```
+
+This answers:
+
+```text
+What stream activity touched this account in the last hour in this app instance?
+```
+
+Each transfer message records activity for both accounts:
+
+```text
+fromAccountId -> OUTGOING
+toAccountId   -> INCOMING
+```
+
+Tracked stages:
+
+```text
+RECEIVED
+PROCESSING
+SUCCESS
+FAILED
+```
+
+This is useful for debugging and live operational visibility. It is not used for balances, idempotency, audit, or reporting. Those remain in PostgreSQL.
+
+## Why Redis Is Infrastructure
+
+The application service should not know Redis details.
+
+It depends on:
+
+```text
+IdempotencyLockRegistry
+```
+
+The local and Redis implementations are replaceable adapters:
+
+```text
+LocalIdempotencyLockRegistry
+RedisIdempotencyLockRegistry
+```
+
+This keeps the transfer use case independent from the locking technology.
 
 ## Idempotency Design
 
@@ -86,20 +177,33 @@ constraint uk_transaction_idempotency_key unique (idempotency_key)
 
 This is the correctness boundary. Even if multiple app instances receive the same key at the same time, only one row can be created.
 
-## Local Idempotency Lock
+## Idempotency Locking
 
-`LocalIdempotencyLockRegistry` is an in-memory optimization.
+The lock prevents duplicate same-key work before the service reaches the database transfer logic.
 
-It serializes same-key requests inside one JVM:
+Local mode:
 
 ```text
-same idempotencyKey -> one at a time
-different idempotencyKey -> can run concurrently
+same idempotencyKey -> one at a time in this JVM
 ```
 
-It does not replace the database uniqueness constraint because it cannot protect across multiple app instances.
+Redis mode:
 
-## Pessimistic Account Locking
+```text
+same idempotencyKey -> one at a time across app instances sharing Redis
+```
+
+Redis uses:
+
+```text
+SET key token NX PX ttl
+```
+
+and unlocks with a Lua script that deletes the key only if the token matches.
+
+The local `ReentrantLock` and Redis lock are optimizations. The database unique constraint remains the final correctness boundary.
+
+## Account Locking
 
 The repository method:
 
@@ -109,9 +213,7 @@ The repository method:
 Optional<Account> findByIdForUpdate(UUID id);
 ```
 
-causes Hibernate/PostgreSQL to lock the selected account row.
-
-Conceptual SQL:
+maps to SQL similar to:
 
 ```sql
 select *
@@ -120,11 +222,11 @@ where id = ?
 for update;
 ```
 
-This prevents concurrent writes to the same account balance while the transfer transaction is open.
+This blocks concurrent writes to the same account balance until the transaction commits or rolls back.
 
-## Deadlock Avoidance
+## Deadlock Reduction
 
-The service always locks account rows in deterministic UUID order:
+The service sorts account IDs before locking:
 
 ```java
 List<UUID> lockOrder = List.of(command.fromAccountId(), command.toAccountId())
@@ -133,26 +235,17 @@ List<UUID> lockOrder = List.of(command.fromAccountId(), command.toAccountId())
         .toList();
 ```
 
-This avoids the classic opposite-lock problem:
-
-```text
-Transfer 1: A -> B
-Transfer 2: B -> A
-```
-
-Both transfers lock the smaller UUID first, then the larger UUID.
+So `A -> B` and `B -> A` both lock accounts in the same order.
 
 ## Retry Design
 
-`LockRetryExecutor` is separate from `TransferService.executeTransfer(...)`.
-
-This keeps retry policy isolated from business transfer logic.
-
-It retries:
+`LockRetryExecutor` retries transient lock failures:
 
 - `CannotAcquireLockException`
 - `PessimisticLockingFailureException`
 - `QueryTimeoutException`
+
+The retry policy is outside `executeTransfer(...)`, so business logic stays separate from retry mechanics.
 
 It does not retry:
 
@@ -185,17 +278,21 @@ If the transfer fails, `FAILED` is also written in a separate transaction so the
 
 ## Scaling Notes
 
-This design is safe for multiple app instances because the critical correctness mechanisms are in PostgreSQL:
+For one app instance, local locking is enough as an optimization.
+
+For multiple app instances, Redis locking reduces duplicate same-key work across instances.
+
+Kafka stream intake plus a bounded in-memory queue helps absorb bursts inside an app instance, but Kafka remains the durable stream.
+
+For correctness, this service relies on PostgreSQL:
 
 - unique idempotency key constraint
 - pessimistic row locks
 - database transactions
 
-The local `ReentrantLock` is only a same-JVM optimization.
-
-For distributed microservices, the single database transaction would usually become:
+For distributed microservices, this would usually evolve into:
 
 - saga orchestration
 - transactional outbox
 - idempotent debit/credit operations per service
-- eventual consistency and compensating transactions
+- eventual consistency and compensating actions

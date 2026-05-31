@@ -19,9 +19,42 @@ spring:
           time_zone: UTC
   jackson:
     default-property-inclusion: non_null
+  data:
+    redis:
+      host: localhost
+      port: 6379
+      repositories:
+        enabled: false
+      timeout: 2s
+  kafka:
+    bootstrap-servers: localhost:9092
+    consumer:
+      auto-offset-reset: earliest
+      enable-auto-commit: false
+      key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      value-deserializer: org.springframework.kafka.support.serializer.JsonDeserializer
+      properties:
+        spring.json.trusted.packages: com.example.moneytransfer.interfaces.stream
+        spring.json.value.default.type: com.example.moneytransfer.interfaces.stream.TransferStreamMessage
+    listener:
+      ack-mode: manual
   sql:
     init:
       mode: always
+
+money-transfer:
+  lock:
+    type: local
+    redis:
+      ttl: 30s
+      wait-timeout: 2s
+      retry-delay: 50ms
+  stream:
+    kafka:
+      enabled: false
+      transfer-requests-topic: money-transfer.requests
+      consumer-group: money-transfer-service
+      queue-capacity: 1000
 
 logging:
   level:

@@ -29,7 +29,7 @@ public class TransferService {
 
     private final AccountRepository accountRepository;
     private final TransactionRecordRepository transactionRecordRepository;
-    private final LocalIdempotencyLockRegistry localIdempotencyLockRegistry;
+    private final IdempotencyLockRegistry idempotencyLockRegistry;
     private final LockRetryExecutor lockRetryExecutor;
     private final TransactionTemplate transferTransaction;
     private final TransactionTemplate requiresNewTransaction;
@@ -37,13 +37,13 @@ public class TransferService {
     public TransferService(
             AccountRepository accountRepository,
             TransactionRecordRepository transactionRecordRepository,
-            LocalIdempotencyLockRegistry localIdempotencyLockRegistry,
+            IdempotencyLockRegistry idempotencyLockRegistry,
             LockRetryExecutor lockRetryExecutor,
             PlatformTransactionManager transactionManager
     ) {
         this.accountRepository = accountRepository;
         this.transactionRecordRepository = transactionRecordRepository;
-        this.localIdempotencyLockRegistry = localIdempotencyLockRegistry;
+        this.idempotencyLockRegistry = idempotencyLockRegistry;
         this.lockRetryExecutor = lockRetryExecutor;
         this.transferTransaction = new TransactionTemplate(transactionManager);
         this.requiresNewTransaction = new TransactionTemplate(transactionManager);
@@ -60,7 +60,7 @@ public class TransferService {
                 command.amount(),
                 idempotencyKey
         );
-        return localIdempotencyLockRegistry.executeWithLock(idempotencyKey, () -> doTransfer(command, idempotencyKey));
+        return idempotencyLockRegistry.executeWithLock(idempotencyKey, () -> doTransfer(command, idempotencyKey));
     }
 
     private TransferResult doTransfer(TransferCommand command, String idempotencyKey) {
