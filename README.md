@@ -18,6 +18,37 @@ Spring Boot service for transferring money between accounts with DDD-style layer
 - Buffers stream messages with a bounded `LinkedBlockingQueue`.
 - Tracks recent per-account stream activity with `ConcurrentSkipListMap`.
 
+## Java Skills Demonstrated
+
+This project is a production-style Java backend example that demonstrates more than basic CRUD.
+
+- Java 21 and Maven project structure.
+- Spring Boot REST API design.
+- DDD-style package separation across application, domain, infrastructure, and interface layers.
+- Transaction-safe money transfer business flow.
+- Idempotency handling with client-provided request keys.
+- Concurrency safety with account locking and deterministic lock ordering.
+- Duplicate request handling that avoids double processing.
+- Transaction audit records with `PROCESSING`, `SUCCESS`, and `FAILED` statuses.
+- PostgreSQL persistence with Spring Data JPA.
+- Optional Redis-backed locking for multi-instance deployments.
+- Kafka stream intake for asynchronous transfer requests.
+- Bounded queue processing for stream messages.
+- Retry handling for transient database lock failures.
+- Unit and integration tests covering idempotency, concurrency, retries, REST, and stream processing.
+
+Key engineering points:
+
+- Transfers are idempotent using client-provided keys.
+- Concurrent transfers are protected with deterministic account locking.
+- Duplicate requests return the original result instead of double-charging.
+- Transient lock failures are retried outside the transactional method.
+- Kafka input is decoupled from processing through a bounded queue.
+
+Positioning statement:
+
+> A production-style Java 21 money transfer service demonstrating transaction safety, idempotency, concurrency control, PostgreSQL persistence, Redis locking, Kafka intake, and tested business invariants.
+
 ## Tech Stack
 
 - Java 21
