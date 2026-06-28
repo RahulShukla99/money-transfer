@@ -481,28 +481,6 @@ mark FAILED transaction record
 
 This ensures failure audit records survive even when the money movement transaction rolls back.
 
-## Important Files
-
-```text
-src/main/java/com/example/moneytransfer/interfaces/rest/TransferController.java
-src/main/java/com/example/moneytransfer/interfaces/rest/TransferRequest.java
-src/main/java/com/example/moneytransfer/interfaces/rest/AccountStreamActivityController.java
-src/main/java/com/example/moneytransfer/interfaces/stream/TransferStreamConsumer.java
-src/main/java/com/example/moneytransfer/interfaces/stream/TransferStreamMessage.java
-src/main/java/com/example/moneytransfer/interfaces/stream/LinkedBlockingTransferStreamQueue.java
-src/main/java/com/example/moneytransfer/interfaces/stream/TransferStreamWorker.java
-src/main/java/com/example/moneytransfer/interfaces/stream/AccountStreamActivityTracker.java
-src/main/java/com/example/moneytransfer/application/service/TransferService.java
-src/main/java/com/example/moneytransfer/application/service/IdempotencyLockRegistry.java
-src/main/java/com/example/moneytransfer/application/service/LocalIdempotencyLockRegistry.java
-src/main/java/com/example/moneytransfer/application/service/LockRetryExecutor.java
-src/main/java/com/example/moneytransfer/infrastructure/lock/RedisIdempotencyLockRegistry.java
-src/main/java/com/example/moneytransfer/domain/model/Account.java
-src/main/java/com/example/moneytransfer/domain/model/TransactionRecord.java
-src/main/resources/schema.sql
-src/main/resources/data.sql
-```
-
 ## Tests
 
 The test suite covers:
