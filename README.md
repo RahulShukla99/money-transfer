@@ -1,5 +1,7 @@
 # Money Transfer Service
 
+A production-style Java 21 money transfer service demonstrating transaction safety, idempotency, concurrency control, PostgreSQL persistence, Redis locking, Kafka intake, and tested business invariants.
+
 Spring Boot service for transferring money between accounts with DDD-style layering, PostgreSQL persistence, idempotency, concurrency safety, optional Redis-backed idempotency locks, retry handling for database lock failures, Kafka stream intake, queued processing, per-account activity tracking, and transaction audit records.
 
 ## Features
@@ -44,10 +46,6 @@ Key engineering points:
 - Duplicate requests return the original result instead of double-charging.
 - Transient lock failures are retried outside the transactional method.
 - Kafka input is decoupled from processing through a bounded queue.
-
-Positioning statement:
-
-> A production-style Java 21 money transfer service demonstrating transaction safety, idempotency, concurrency control, PostgreSQL persistence, Redis locking, Kafka intake, and tested business invariants.
 
 ## Tech Stack
 
