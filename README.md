@@ -179,7 +179,7 @@ Sample request:
   "fromAccountId": "11111111-1111-1111-1111-111111111111",
   "toAccountId": "22222222-2222-2222-2222-222222222222",
   "amount": 25.00,
-  "idempotencyKey": "postman-transfer-001"
+  "idempotencyKey": "transfer-request-001"
 }
 ```
 
@@ -194,22 +194,8 @@ Sample success response:
   "toAccountId": "22222222-2222-2222-2222-222222222222",
   "amount": 25.00,
   "currency": "USD",
-  "idempotencyKey": "postman-transfer-001"
+  "idempotencyKey": "transfer-request-001"
 }
-```
-
-## Postman
-
-Import the collection if present:
-
-```text
-postman/Money Transfer Service.postman_collection.json
-```
-
-Or create a request manually using:
-
-```text
-POST http://localhost:8080/api/transfers
 ```
 
 ## Transfer Stream Consumer
