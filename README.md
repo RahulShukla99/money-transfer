@@ -18,12 +18,6 @@ Spring Boot service for transferring money between accounts with DDD-style layer
 - Buffers stream messages with a bounded `LinkedBlockingQueue`.
 - Tracks recent per-account stream activity with `ConcurrentSkipListMap`.
 
-## Project Location
-
-```text
-C:\Users\rahul\IdeaProjects\transfer-fromaccountid-toaccountid-amount-idempotencykey-design
-```
-
 ## Tech Stack
 
 - Java 21
